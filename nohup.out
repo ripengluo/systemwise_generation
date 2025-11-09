@@ -1,0 +1,29 @@
+
+(VESTA-gui:27034): Gtk-WARNING **: 23:53:54.153: Negative content width -2 (allocation 32, extents 17x17) while allocating gadget (node button, owner GtkButton)
+
+(VESTA-gui:27034): Gtk-WARNING **: 23:53:54.153: Negative content width -2 (allocation 32, extents 17x17) while allocating gadget (node button, owner GtkButton)
+
+(VESTA-gui:27034): Gtk-WARNING **: 23:53:54.153: Negative content width -2 (allocation 32, extents 17x17) while allocating gadget (node button, owner GtkButton)
+
+(VESTA-gui:27034): Gtk-WARNING **: 23:53:54.153: Negative content width -2 (allocation 32, extents 17x17) while allocating gadget (node button, owner GtkButton)
+
+(VESTA-gui:27034): Gtk-CRITICAL **: 23:53:54.155: gtk_box_gadget_distribute: assertion 'size >= 0' failed in GtkNotebook
+
+(VESTA-gui:27034): Gtk-WARNING **: 23:53:54.865: Negative content width -2 (allocation 32, extents 17x17) while allocating gadget (node button, owner GtkButton)
+
+(VESTA-gui:27034): Gtk-WARNING **: 23:53:54.865: Negative content width -2 (allocation 32, extents 17x17) while allocating gadget (node button, owner GtkButton)
+
+(VESTA-gui:27034): Gtk-CRITICAL **: 23:53:54.865: gtk_box_gadget_distribute: assertion 'size >= 0' failed in GtkNotebook
+
+(VESTA-gui:27034): Gtk-CRITICAL **: 23:53:54.866: gtk_box_gadget_distribute: assertion 'size >= 0' failed in GtkNotebook
+
+(VESTA-gui:27034): Gtk-CRITICAL **: 23:53:56.274: gtk_box_gadget_distribute: assertion 'size >= 0' failed in GtkNotebook
+  File "/mnt/c/Users/24038/Desktop/project_inksgen/site_based_generation/gen_crystal.py", line 520
+    continue
+    ^^^^^^^^
+SyntaxError: 'continue' not properly in loop
+sf2m and cnn+mpnn models loaded
+✅ Done. Results under: /mnt/c/Users/24038/Desktop/project_inksgen/site_based_generation/out_new2
+run.sh: line 3: 63914 Killed                  python gen_crystal.py --site-ckpt models/finetune_best.pt --sf2m-ckpt models/sf2m_weights_step_1980000.pt
+sf2m and cnn+mpnn models loaded
+✅ Done. Results under: /mnt/c/Users/24038/Desktop/project_inksgen/systemwise_generation/out_new2
