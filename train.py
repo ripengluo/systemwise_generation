@@ -114,7 +114,7 @@ def invert_coeff_to_rho(coeff: np.ndarray,
     tgt = coeff.shape[1:]
     C = coeff.shape[0]
 
-    # 两通道判别：up/down（相干） or total/diff（较不相干）
+    # Two-channel reconstruction: up/down (more coherent) or total/diff (less coherent)
     rec = [idctn_ortho(coeff[i]) for i in range(C)]
     rho_total = rec[0] + rec[1]
     return rho_total.astype(np.float32, copy=False)
@@ -226,7 +226,7 @@ def predict_spacegroup_from_rho(rho: np.ndarray,
     if not cands:
         cands = ["P"]
 
-    # 3) 遍历各 centering → select_sg_by_hall
+    # 3) Iterate over each centering → select_sg_by_hall
     per_center = []
     best = None
     best_center = None
@@ -260,11 +260,11 @@ def predict_spacegroup_from_rho(rho: np.ndarray,
             best_center = cent
     t_loop = time.perf_counter() - t0
 
-    # 4) 总耗时
+    # 4) Total elapsed time
     t_total = time.perf_counter() - t_all0
     
     """
-    # 5) 打印简单 profile 汇总
+    # 5) Simple profiling summary (optional debug printout)
     print(f"[PROFILE] predict_spacegroup_from_rho")
     print(f"  total               : {t_total:.4f}s")
     print(f"  ├─ downsample       : {t_downsample:.4f}s")
@@ -294,22 +294,22 @@ def atoms_and_wyckoff_from_rho(rho: np.ndarray,
                                prefer_sg: Optional[int] = None,
                                smooth_sigma_vox: float = 1.0) -> Dict[str, Any]:
     """
-    读取 (rho, lattice)，用 PeakDetector（msblob-only）完成：
-      - 明显峰分类（atomic/bond）+ 键峰经 BCP 反推原子
-      - 合并去重得到 final_atoms
-      - 逐点 Wyckoff（与 final_atoms 一一对应，防止越界）
-      - 统计占位（wyckoff_occ），并导出等价分组 eq_groups
+    Read (rho, lattice), and use PeakDetector (msblob-only) to:
+      - Classify obvious peaks (atomic/bond) + back-calculate atoms from BCPs
+      - Merge & deduplicate to obtain final_atoms
+      - Per-point Wyckoff assignment (one-to-one with final_atoms; prevent OOB)
+      - Count occupancy (wyckoff_occ) and export equivalent groups eq_groups
 
-    返回字段（与原版对齐）：
-      - final_atoms_frac: (N,3) 分数坐标
-      - wyckoff_occ: Dict[str,int] 统计
-      - spglib_dataset: 与 final_atoms 对齐的 ds_local
-      - eq_groups: List[np.ndarray]（每组同等价原子）
-      - wyckoff_letters: List[str]（与 final_atoms 一一对应）
-      - bond_like_fracs: (M,3) 键峰坐标（来自明显峰分类）
-      - bond_like_values: (M,) 这些键峰的峰值
+    Returned fields (aligned with the original version):
+      - final_atoms_frac: (N,3) fractional coordinates
+      - wyckoff_occ: Dict[str,int] counts
+      - spglib_dataset: ds_local aligned with final_atoms
+      - eq_groups: List[np.ndarray] (each group contains equivalent atoms)
+      - wyckoff_letters: List[str] (one-to-one with final_atoms)
+      - bond_like_fracs: (M,3) bond-peak coordinates (from obvious peak classification)
+      - bond_like_values: (M,) peak values of these bond peaks
     """
-    # ---- 构造 DensityField ----
+    # ---- Construct DensityField ----
     class _CHG: pass
     chg = _CHG()
     chg.grid = rho.astype(np.float32, copy=False)
@@ -322,7 +322,7 @@ def atoms_and_wyckoff_from_rho(rho: np.ndarray,
     F = DensityField(chg, smooth_sigma_vox=smooth_sigma_vox)
     det = PeakDetector(F)
 
-    # ---- 第一步：分类 + BCP 反推 + 合并 + 逐点 Wyckoff（委托 PeakDetector）----
+    # ---- Step 1: classification + BCP backtracking + merge + per-point Wyckoff (delegated to PeakDetector) ----
     sg_input = int(prefer_sg) if (prefer_sg is not None) else 221
     res = det.classify_and_assign_wyckoff(sg=sg_input)
     #print("peak atoms:")
@@ -335,12 +335,12 @@ def atoms_and_wyckoff_from_rho(rho: np.ndarray,
     #    print(i)
 
 
-    # 最终原子（分数坐标）
+    # Final atoms (fractional coordinates)
     final_atoms = np.asarray(res.get("final_atoms", []), dtype=float)
     if final_atoms.ndim != 2:
         final_atoms = np.zeros((0, 3), float)
 
-    # ---- 占位统计（允许内部 standardize_cell；与逐点标注分离）----
+    # ---- Occupancy counting (allow internal standardize_cell; separate from per-point labels) ----
     #print(final_atoms)
     wy_occ, wy_info = wyckoff_occupancy_from_atoms(
         lattice, final_atoms, symprec=1e-3,
@@ -350,7 +350,7 @@ def atoms_and_wyckoff_from_rho(rho: np.ndarray,
     #print(ds_std)
     #sys.exit()
 
-    # ---- 从“明显峰”里抽取 bond-like 信息（供下游图构建/可视化）----
+    # ---- Extract bond-like information from "obvious peaks" (for downstream graph/visualization) ----
     peaks_meta = res.get("peaks", []) or []
     bond_like_fracs, bond_like_vals = [], []
     for p in peaks_meta:
@@ -439,7 +439,7 @@ def filter_sample_and_dump_debug(
     symprec_lat: float = 1e-3,
     verbose: bool = True,
     ds_lat: Optional[dict] = None,
-    sg_only: bool = False,   # ★ 新增：只验证 SG
+    sg_only: bool = False,   # NEW: only verify SG equality
 ) -> bool:
     """
     Return True if sample passes; otherwise dump CHGCAR/JSON and return False.
@@ -533,7 +533,7 @@ def build_graph(lattice: np.ndarray,
                 edge_mode: str = "or") -> Dict[str, Any]:
     """
     Atom-level graph using minimum-image in fractional space.
-    edge_mode: 'or' (默认) / 'and' / 'directed'
+    edge_mode: 'or' (default) / 'and' / 'directed'
     """
     L = np.asarray(lattice, float)
     N = len(fr_all)
@@ -555,19 +555,19 @@ def build_graph(lattice: np.ndarray,
     cut = np.nextafter(dmin + float(nn_buffer_A), np.inf)  # robust
     keep = D <= cut[:, None]            # i->j
 
-    # 对称策略
+    # Symmetrization policy
     if edge_mode == "and":
-        keep_final = keep & keep.T      # 互为邻居才保留
+        keep_final = keep & keep.T      # keep only mutual neighbors
     elif edge_mode == "or":
-        keep_final = keep | keep.T      # 任一方向满足
+        keep_final = keep | keep.T      # keep if either direction qualifies
     else:  # 'directed'
-        keep_final = keep               # 保持有向，不再补反向
+        keep_final = keep               # keep directed edges as-is (no reverse added)
 
-    # 只取上三角避免成对重复，再统一补反向（除了 directed）
+    # Upper-triangular extraction to avoid duplicates, then add reverse if needed
     if edge_mode in ("and", "or"):
         ii, jj = np.where(np.triu(keep_final, k=1))
         Vij = V[ii, jj, :].astype(np.float32)     # (E,3)
-        # i->j 和 j->i
+        # i->j and j->i
         src = np.concatenate([ii, jj]).astype(np.int64)
         dst = np.concatenate([jj, ii]).astype(np.int64)
         eattr = np.concatenate([Vij, -Vij], axis=0)
@@ -615,7 +615,7 @@ def build_node_features(rho, fr_all, lattice, wyckoff_info, cnn_model, device):
             radius=1.0, out_size=32,
         )                               # (32,32,32) numpy
         x = torch.from_numpy(patch).unsqueeze(0).unsqueeze(0).to(device)  # (1,1,32,32,32)
-        z = cnn_model(x).squeeze(0)     # (embed_dim,)  ← 不要 detach/不要转 numpy
+        z = cnn_model(x).squeeze(0)     # (embed_dim,)  ← do not detach/convert to numpy
         feats.append(z)
 
     Z = torch.stack(feats, dim=0)                              # (N, embed_dim)
@@ -633,22 +633,22 @@ import torch.nn as nn
 
 class MPNN(nn.Module):
     """
-    带 Wyckoff 组内硬约束的 MPNN：
-      - 输入特征包含 [..., Wy one-hot(K=26), ...]
-      - forward 末尾：基于 Wy 分组（argmax）对 logits 做组均值并回填
+    MPNN with hard constraints within each Wyckoff group:
+      - Input features include [..., Wy one-hot (K=26), ...]
+      - At the end of forward: group logits by Wy (argmax), average within group, and write back
 
-    参数：
-      in_dim:       节点输入维度
-      edge_dim:    （可留作兼容占位）
-      hidden:       隐藏维度
-      num_layers:   消息传递层数
-      num_classes:  类别数
-      rbf_k:        RBF 基函数数量（编码距离）
-      dropout:      Dropout 概率
-      jk_mode:      Jumping Knowledge 聚合方式：'concat' | 'max' | 'last'
-      wy_start:     x 中 Wy one-hot 的起始下标（例如 128）
-      wy_dim:       Wy one-hot 的维度（默认 26）
-      enforce_same_wy: 是否启用组内硬约束
+    Args:
+      in_dim:       node input dimension
+      edge_dim:     (reserved for compatibility)
+      hidden:       hidden dimension
+      num_layers:   number of message passing layers
+      num_classes:  number of classes
+      rbf_k:        number of RBF basis functions (encode distance)
+      dropout:      dropout probability
+      jk_mode:      Jumping Knowledge aggregation: 'concat' | 'max' | 'last'
+      wy_start:     start index of Wy one-hot within x (e.g., 128)
+      wy_dim:       Wy one-hot dimension (default 26)
+      enforce_same_wy: whether to enable hard constraint within groups
     """
     def __init__(self, in_dim: int, edge_dim: int, hidden: int, num_layers: int, num_classes: int,
                  rbf_k: int = 16, dropout: float = 0.10, jk_mode: str = "concat",
@@ -660,26 +660,26 @@ class MPNN(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.jk_mode = jk_mode
 
-        # —— Wy one-hot 在输入中的位置，用于组内共享 —— 
-        self.wy_start = int(wy_start)            # 例如 128
+        # —— Position of Wy one-hot in the input x, used for group sharing ——
+        self.wy_start = int(wy_start)            # e.g., 128
         self.wy_dim   = int(wy_dim)              # 26
         self.enforce_same_wy = bool(enforce_same_wy)
 
-        # 节点输入映射
+        # Node input mapping
         self.node_in = nn.Sequential(
             nn.Linear(in_dim, hidden),
             nn.LayerNorm(hidden),
             nn.SiLU(inplace=True),
         )
 
-        # 边特征编码（方向 + 距离 + RBF）
+        # Edge feature encoding (direction + distance + RBF)
         self.edge_enc = nn.Sequential(
             nn.Linear(3 + 1 + self.rbf_k, hidden),  # (ux,uy,uz) + r + rbf
             nn.SiLU(inplace=True),
             nn.LayerNorm(hidden),
         )
 
-        # 消息 / 更新 / 归一化
+        # Message / Update / Normalization
         self.msg_mlps = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(hidden*3, hidden),
@@ -698,10 +698,10 @@ class MPNN(nn.Module):
         ])
         self.norms = nn.ModuleList([nn.LayerNorm(hidden) for _ in range(self.layers)])
 
-        # JK 聚合
+        # JK aggregation
         self.jk_proj = nn.Linear(hidden*(self.layers+1), hidden)
 
-        # 输出头
+        # Output head
         self.out = nn.Sequential(
             nn.Linear(hidden, hidden),
             nn.SiLU(inplace=True),
@@ -709,10 +709,10 @@ class MPNN(nn.Module):
             nn.Linear(hidden, num_classes),
         )
 
-    # ======== 工具函数 ========
+    # ======== Utilities ========
     @staticmethod
     def _edge_dir_dist(edge_attr: torch.Tensor) -> tuple:
-        """从 edge_attr 取相对位移向量 v，拆成单位方向 u 和距离 r。"""
+        """Extract relative displacement vector v from edge_attr, and split into unit direction u and distance r."""
         if edge_attr.numel() == 0:
             device = edge_attr.device
             return (torch.zeros((0,3), device=device, dtype=edge_attr.dtype),
@@ -723,7 +723,7 @@ class MPNN(nn.Module):
         return u, r
 
     def _rbf(self, r: torch.Tensor, K: int) -> torch.Tensor:
-        """对距离 r 做 RBF 基展开（自适应 r_max，稳定梯度）。"""
+        """RBF basis expansion on distance r (adaptive r_max for stable gradients)."""
         if r.numel() == 0:
             return torch.zeros((0, K), device=r.device, dtype=r.dtype)
         with torch.no_grad():
@@ -739,14 +739,14 @@ class MPNN(nn.Module):
         e = torch.cat([u, r, rbf], dim=-1)
         return self.edge_enc(e)
 
-    # ======== 关键：组内硬约束（版本 A：argmax 分组 → 均值 → 回填） ========
+    # ======== Key: hard constraint within Wy groups (Version A: argmax grouping → mean → write back) ========
     def _enforce_same_wy_logits(self, x: torch.Tensor, logits: torch.Tensor) -> torch.Tensor:
         """
-        假设 x 的 [wy_start : wy_start+wy_dim] 是 **硬 one-hot**。
-        1) 通过 argmax 得到每个节点的组 id；
-        2) 对每个组累加 logits 并计数；
-        3) 计算组均值；
-        4) 依据组 id 将均值回填到各节点，得到共享 logits。
+        Assume x[wy_start : wy_start+wy_dim] is a **hard one-hot**.
+        1) Obtain group id by argmax;
+        2) Accumulate logits per group and count;
+        3) Compute group means;
+        4) Write the mean logits back to each node according to its group id.
         """
         if (not self.enforce_same_wy) or (self.wy_start < 0) or (self.wy_dim <= 0):
             return logits
@@ -755,39 +755,39 @@ class MPNN(nn.Module):
         if G.numel() == 0:
             return logits
 
-        # 分组 id（0..K-1），硬 one-hot 情况下等价于 argmax
+        # Group id (0..K-1); equals argmax for hard one-hot
         group_id = G.argmax(dim=-1)  # (N,)
         N, C = logits.size()
         K = self.wy_dim
         device = logits.device
         dtype = logits.dtype
 
-        # 按组累加 logits
+        # Accumulate logits by group
         sum_logits = torch.zeros(K, C, device=device, dtype=dtype)
         sum_logits.index_add_(0, group_id, logits)
 
-        # 组计数
+        # Group counts
         counts = torch.zeros(K, 1, device=device, dtype=dtype)
         counts.index_add_(0, group_id, torch.ones(N, 1, device=device, dtype=dtype))
 
-        # 组均值（避免除零）
+        # Group averages (avoid division by zero)
         mean_logits = sum_logits / counts.clamp_min(1.0)  # (K, C)
 
-        # 回填：每个节点取其组的均值
+        # Write back: each node takes the mean of its group
         logits_shared = mean_logits.index_select(0, group_id)  # (N, C)
         return logits_shared
 
-    # ======== 前向传播 ========
+    # ======== Forward ========
     def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_attr: torch.Tensor) -> torch.Tensor:
-        # 节点初始化
+        # Node initialization
         h = self.node_in(x)
         states = [h]
 
-        # 编码边
+        # Encode edges
         src, dst = edge_index[0], edge_index[1]
         e_enc = self._encode_edge(edge_attr)
 
-        # 消息传递
+        # Message passing
         for l in range(self.layers):
             if e_enc.size(0) == 0:
                 m = torch.zeros_like(h)
@@ -803,7 +803,7 @@ class MPNN(nn.Module):
             h = self.dropout(h)
             states.append(h)
 
-        # JK 聚合
+        # JK aggregation
         if self.jk_mode == "concat":
             h_agg = torch.cat(states, dim=-1)
             h_agg = self.jk_proj(h_agg)
@@ -812,15 +812,10 @@ class MPNN(nn.Module):
         else:  # 'last'
             h_agg = states[-1]
 
-        # 分类头
+        # Classification head
         logits = self.out(h_agg)  # (N, C)
-        #for i in logits:
-        #    print(i)
-        #print(np.argmax(logits))
-        #print(logits.shape)
-        #sys.exit()
 
-        # ★ 在模型内部做 Wyckoff 组内 logits 共享（硬约束）
+        # ★ Share logits within Wy groups inside the model (hard constraint)
         logits = self._enforce_same_wy_logits(x, logits)
         return logits
 
@@ -833,10 +828,10 @@ def _compute_validation_loss(test_set: torch.utils.data.Dataset,
                              ce_loss,
                              max_samples: int = -1) -> float:
     """
-    验证集上复用训练路径（cubic→搭图→CNN节点特征→MPNN→CE loss），
-    并与训练阶段一致地过滤标签空间（Z<=83）。
+    On the validation set, reuse the training pipeline (cubic → graph → CNN node features → MPNN → CE loss),
+    and filter the label space consistently with training (Z<=83).
     """
-    # 保留并恢复原训练/评估状态
+    # Preserve and restore original train/eval states
     mpnn_was_training = mpnn.training
     cnn_was_training = getattr(cnn_model, "training", False)
     mpnn.eval()
@@ -849,34 +844,34 @@ def _compute_validation_loss(test_set: torch.utils.data.Dataset,
     for i in range(nsamp):
         item = test_set[i]
 
-        # 仅评估 cubic，和主程序一致
+        # Only evaluate cubic, consistent with main program
         if item.get("c_system", "") != "cubic":
             continue
 
         coeff = item["coeff"]
         rho = invert_coeff_to_rho(coeff, out_shape=None, smooth_sigma_vox=0.0)
 
-        # —— 与训练路径一致：直接使用数据集里的几何信息（不强依赖在线重建）——
+        # —— Same as training path: directly use geometry info in dataset (avoid heavy online reconstruction) ——
         fr_all  = item.get("fr_all")
         wy_info = item.get("wy_info")
         if fr_all is None or wy_info is None or len(fr_all) == 0:
             continue
 
-        # 搭图（与训练用的默认参数一致）
+        # Build graph (same defaults as training)
         G = build_graph(item["lattice"], fr_all, nn_buffer_A=0.2, edge_mode="or")
 
-        # 节点特征（CNN + Wy one-hot + SG one-hot），与训练一致
+        # Node features (CNN + Wy one-hot + SG one-hot), consistent with training
         X = build_node_features(rho, fr_all, item["lattice"], wy_info, cnn_model, device)
 
-        # 生成标签，严格按训练路径的过滤规则（只保留 Z<=83）
+        # Labels: strictly follow training filter rules (keep only Z<=83)
         elem_map   = item.get("elem_map", {})
         wy_letters = wy_info.get("wyckoffs") or []
-        # 先保证每个 wy 字母都能在 elem_map 里找到元素
+        # Ensure each wy letter maps to an element in elem_map
         if any((w not in elem_map) for w in wy_letters):
             continue
         y_symbols = [elem_map[w] for w in wy_letters]
 
-        # 训练代码里：若存在不在 sym2Z 的元素就跳过；这里保持一致
+        # Skip if any element is outside sym2Z (keep consistent with training)
         if any((s not in sym2Z) for s in y_symbols):
             continue
 
@@ -886,11 +881,11 @@ def _compute_validation_loss(test_set: torch.utils.data.Dataset,
         edge_attr = (torch.from_numpy(G["edge_attr"]).float().to(device)
                      if G["edge_attr"].size > 0 else torch.zeros((0, 3), dtype=torch.float32, device=device))
 
-        # 前向与损失
+        # Forward and loss
         logits = mpnn(X, edge_index, edge_attr)  # (N, 83)
         y_idx = torch.tensor([Element(s).Z - 1 for s in y_symbols],
                              dtype=torch.long, device=logits.device)
-        # 防御性检查：确保 target 在 [0,82]，否则跳过（理论上已被上面的过滤覆盖）
+        # Defensive check: ensure targets are in [0,82]; otherwise skip (should already be filtered)
         if (y_idx.min().item() < 0) or (y_idx.max().item() >= logits.size(-1)):
             continue
 
@@ -898,7 +893,7 @@ def _compute_validation_loss(test_set: torch.utils.data.Dataset,
         total_loss += float(loss.detach().cpu().item())
         count += 1
 
-    # 恢复模型状态
+    # Restore model states
     if mpnn_was_training: mpnn.train()
     if hasattr(cnn_model, "train") and cnn_was_training: cnn_model.train()
     return total_loss / max(1, count)
@@ -920,12 +915,13 @@ def main():
                     help="Run validation every N training steps (samples).")
     ap.add_argument("--val-max-samples", type=int, default=-1,
                     help="Cap validation to this many samples for speed.")
-    # ★ 新增：只做一次迭代（不训练），并按样本打印耗时
+    # ★ NEW: run a single pass (no training) and print per-sample timing
     ap.add_argument("--eval-only", default=False, action="store_true", help="No training; single pass over data with timing.")
-    # ★ 新增：只验证 rho->SG，SG 对即通过ap.add_argument("--sg-only", default="True", action="store_true", help="Debug rho->SG only: pass if SG_rho == SG_lat.")
+    # ★ NEW: only validate rho->SG; pass when SG matches (note: the following commented call shows the idea)
+    # ap.add_argument("--sg-only", default="True", action="store_true", help="Debug rho->SG only: pass if SG_rho == SG_lat.")
     ap.add_argument("--sg-only", default=False, action="store_true", help="Debug rho->SG only: pass if SG_rho == SG_lat.")
     ap.add_argument("--val-log", type=str, default="val_log.tsv", help="Validation-only log file (TSV): mpid, sg_rho, wy_rho, sg_lat, wy_lat, match_sg, match_wy.")
-    # --- 在 argparse 后面加 ---
+    # --- also add this after argparse ---
     ap.add_argument("--edge-mode", type=str, default="or", choices=["or", "and", "directed"], help="How to symmetrize edges: 'or' keep if i->j or j->i; 'and' keep only mutual; 'directed' keep as-is without adding reverse.")
 
     args = ap.parse_args()
@@ -956,7 +952,7 @@ def main():
                     if 0 <= j < len(dataset_raw):
                         cubic_idx.append(j)
         else:
-            # 先枚举索引一次确定 cubic（该步也会触发一次 __getitem__ 解析 POSCAR）
+            # First enumerate indices once to determine cubic (this also triggers __getitem__ to parse POSCAR)
             all_idx = list(range(len(dataset_raw)))
             if args.max_samples >= 0:
                 all_idx = all_idx[:min(len(all_idx), args.max_samples)]
@@ -1007,15 +1003,15 @@ def main():
     ifile = open("log_train", "w")
     print(f"[INFO] Iterating {nsamp} samples on {'test' if args.eval_only else 'train'} split. sg_only={args.sg_only}", file=ifile)
 
-    # 计时统计
+    # Timing accumulators
     n_proc = 0
     global_step = 0
     acc_invert = acc_sg = acc_atomswy = acc_filter = acc_total = 0.0
 
-    # 只跑一轮；若 eval-only 则不训练
+    # Only one epoch; if eval-only then no training
     epochs = 1 if args.eval_only else args.epochs
 
-    # ★ 新增：读取已记录的 mpid 集合（仅 eval-only 有效）
+    # ★ NEW: read already-logged mpids (effective only in eval-only)
     logged_mpids: Set[str] = _load_logged_mpids(args.val_log) if args.eval_only else set()
 
     for epoch in range(1, epochs+1):
@@ -1029,7 +1025,7 @@ def main():
             #    continue
 
 
-            # 仅 cubic
+            # Only cubic
             if c_system != "cubic":
                 continue
             #print(mpid)
@@ -1038,7 +1034,7 @@ def main():
             #    "mp-1076", "mp-10890", "mp-1094967"]:
             #    continue
 
-            # ★ 新增：eval-only 时，若该 mpid 已存在于日志，直接跳过
+            # ★ NEW: in eval-only, skip if this mpid already exists in the log
             if args.eval_only and mpid and (mpid in logged_mpids):
                 print(f"[SKIP-VAL] mpid={mpid} exists in {args.val_log}, skip.")
                 continue
@@ -1068,7 +1064,7 @@ def main():
                     aw = {"wyckoff_occ": {}, "eq_groups": []}
             t3 = time.perf_counter()
 
-            # --- 原有通过/失败过滤与 debug 输出 ---
+            # --- Original pass/fail filtering and debug output ---
             '''
             ok = filter_sample_and_dump_debug(
                 item=item,
@@ -1078,14 +1074,14 @@ def main():
                 crystal_system_hint=c_system,
                 out_dir="./debug_failed_samples",
                 ds_lat=item.get("ds_lat"),
-                sg_only=args.sg_only,   # 只验证 SG 时用这个开关
+                sg_only=args.sg_only,   # Use this switch to only validate SG
             )
             '''
             t4 = time.perf_counter()
 
-            # ★ 新增：eval-only 记录日志（每个 mpid 仅一行）
+            # ★ NEW: eval-only logging (one line per mpid)
             if args.eval_only and mpid:
-                # lattice-side wyckoff 计数（优先用 dataset 中的 ds_lat）
+                # wyckoff count on lattice side (prefer dataset's ds_lat)
                 ds_lat = item.get("ds_lat")
                 sg_lat = int(ds_lat.get("number", -1))
                 letters = ds_lat.get("wyckoffs", [])
@@ -1095,7 +1091,7 @@ def main():
                     k = str(w)[-1].lower()
                     occ_lat[k] = occ_lat.get(k, 0) + 1
 
-                # rho-side wyckoff 计数
+                # wyckoff count on rho side
                 occ_rho: Dict[str,int] = {str(k).lower(): int(v) for k, v in (aw.get("wyckoff_occ", {}) or {}).items()}
                 # matches
                 sg_rho = int(sg_pred.get("spacegroup_number", -1))
@@ -1112,7 +1108,7 @@ def main():
                     "match_wy": "True" if match_wy else "False",
                 }
                 _append_val_log(args.val_log, row)
-                logged_mpids.add(mpid)  # 同一进程后续若再遇到同 mpid 也可跳过
+                logged_mpids.add(mpid)  # Skip same mpid later in the same process
 
                 invert_ms  = (t1 - t0) * 1000.0
                 sg_ms      = (t2 - t1) * 1000.0
@@ -1133,11 +1129,11 @@ def main():
                 ))
                 print("------------#############################################-----------")
 
-            # eval-only: 不进入训练与图构建
+            # eval-only: do not proceed to training/graph building
             if args.eval_only:
                 continue
 
-            # 下面是原训练路径（目前仅在非 eval-only 时执行）
+            # Below is the original training path (executed only when not eval-only)
             #if not ok:
             #    continue
 
@@ -1154,7 +1150,7 @@ def main():
             
             X = build_node_features(rho, fr_all, item["lattice"], wy_info, cnn_model, device)
             
-            # --- dummy 标签（占位）；你后面可以替换成真实元素/族别等 ---
+            # --- dummy labels (placeholder); replace with real element/group later ---
             elem_map = item["elem_map"]
             y = [elem_map[l] for l in wy_info.get("wyckoffs")]
             skip = False
@@ -1182,14 +1178,14 @@ def main():
             optimizer.step()
             total_loss += loss.detach().float().cpu().item()
 
-            # --- 每 N 步做一次验证（仅训练模式下；eval-only 不触发） ---
+            # --- Run validation every N steps (training mode only; not triggered in eval-only) ---
             global_step += 1
             if (not args.eval_only) and (global_step % max(1, int(args.val_interval)) == 0):
                 val_loss = _compute_validation_loss(test_set=test_set, device=device, cnn_model=cnn_model, mpnn=mpnn, ce_loss=F.cross_entropy, max_samples=int(args.val_max_samples))
                 with open("log_train", "a") as _f:
                     print(f"[VAL@step {global_step}] mean validation loss = {val_loss:.6f}", file=_f)
                 
-                # 如创新低则保存
+                # Save if new best
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     os.makedirs(os.path.dirname(best_ckpt_path) or ".", exist_ok=True)
@@ -1203,13 +1199,13 @@ def main():
                         "args": vars(args),
                     }, best_ckpt_path)
                     msg = f"[BEST] step={global_step}  val_loss={val_loss:.6f}  -> saved to {best_ckpt_path}"
-                    with open("log_train", "a") as _f:  # 训练日志
+                    with open("log_train", "a") as _f:  # training log
                         print(msg, file=_f)
 
 
 
         if args.eval_only:
-            break  # 只做一次迭代
+            break  # Single iteration only
         print(f"[E{epoch}] mean loss={total_loss/max(1,nsamp):.6f}")
 
     if n_proc > 0:
@@ -1220,7 +1216,7 @@ def main():
         print("  avg filter:   {:.1f} ms".format(acc_filter / n_proc))
         print("  avg total:    {:.1f} ms".format(acc_total / n_proc))
 
-    # 仅在训练时保存（eval-only 不保存模型）
+    # Save only during training (eval-only does not save the model)
     if not args.eval_only:
         cls_map = {"id2elem": []}
         with open("label_space.json", "w", encoding="utf-8") as f:

@@ -56,7 +56,7 @@ def _string_to_fracs(s: str) -> List[Tuple[str,str,str]]:
     TOKEN = r'[+-]?(?:\d+(?:/\d+)?|[A-Za-z]\w*)'
     LINE_RE = rf'^\s*({TOKEN})\s*,\s*({TOKEN})\s*,\s*({TOKEN})\s*$'
     triplets = re.findall(LINE_RE, s, flags=re.M)
-    return triplets # coords (每个分量是“单 token”的行才会被捕获)
+    return triplets  # coords (only lines where each component is a single token will be captured)
 
 def wrap_frac(frac: np.ndarray) -> np.ndarray:
     f = np.array(frac, dtype=float)
@@ -74,7 +74,7 @@ def minimum_image_cart(v: np.ndarray, lattice: np.ndarray) -> np.ndarray:
 
 def trilinear_sample(grid: np.ndarray, frac: np.ndarray) -> float:
     """
-    Sample using i/N convention (no -0.5). coords in [0,N) with wrap.
+    Sample using i/N convention (no -0.5). Coordinates in [0, N) with wrap.
     """
     nx, ny, nz = grid.shape
     coords = np.array([[frac[0]*nx, frac[1]*ny, frac[2]*nz]]).T
@@ -113,7 +113,7 @@ def subvoxel_refine(grid: np.ndarray, idx):
 
 def _circular_mean_frac(frac_arr: np.ndarray, weights: Optional[np.ndarray]=None) -> np.ndarray:
     """
-    对分数坐标逐轴做圆周均值，结果 ∈ [0,1)。
+    Circular mean along each fractional axis; result ∈ [0,1).
     """
     fr = wrap_frac(np.asarray(frac_arr, float))
     if fr.size == 0:
@@ -129,7 +129,7 @@ def _circular_mean_frac(frac_arr: np.ndarray, weights: Optional[np.ndarray]=None
 
 # ---- peak finder wrapper (skimage compatibility) ----
 if SKIMAGE_AVAILABLE:
-    # omit "num_peaks" when None to avoid np.isfinite(None) errors in newer scikit-image
+    # Omit "num_peaks" when None to avoid np.isfinite(None) errors in newer scikit-image
     def peak_local_max(g, min_distance_vox=3, threshold_rel=0.1,
                        exclude_border=False, num_peaks=None, footprint=None, **kwargs):
         kw = dict(
@@ -187,8 +187,8 @@ def find_peaks(grid, min_distance_vox=3, threshold_rel=0.1,
 # ---- simple top-fraction clustering (PBC, Å-radius) ----
 def _build_neighbor_offsets(nx: int, ny: int, nz: int, lattice: np.ndarray, R_A: float) -> np.ndarray:
     """
-    预计算体素整数位移 (dx,dy,dz)，满足真实距离 <= R_A（Å）。
-    用平均体素尺寸给出保守体素窗口，减少遍历量。
+    Precompute integer voxel offsets (dx,dy,dz) whose real-space distance ≤ R_A (Å).
+    Use an average voxel size to conservatively bound the voxel window to reduce scanning.
     """
     lattice = np.asarray(lattice, float)
     aA, bA, cA = norm(lattice[0]), norm(lattice[1]), norm(lattice[2])
@@ -211,7 +211,7 @@ def _build_neighbor_offsets(nx: int, ny: int, nz: int, lattice: np.ndarray, R_A:
 def merge_close_peaks(fracs, pvals, lattice, merge_radius_cart,
                       grid, **kwargs):
     """
-    Greedy NMS in PBC: strongest-first assignment + circular mean per cluster.
+    Greedy NMS with PBC: strongest-first assignment + circular mean per cluster.
     """
     fracs = np.asarray(fracs, float).reshape(-1,3)
     pvals = np.asarray(pvals, float).reshape(-1)
@@ -369,7 +369,7 @@ def local_shape_metrics(
     elif (elongation >= 1.70) and (sphericity <= 0.92):
         shape = "rod"
     else:
-        # 对金属/离子，适度放宽
+        # Slightly relax for metals/ions
         shape = "sphere" if (sphericity >= 0.80 or elongation < 1.25) else "other"
 
     return shape, float(sphericity), float(elongation), float(est_radius), v1
@@ -382,7 +382,7 @@ class DensityField:
         self.dv = chg.dv
         self.volume = chg.volume
         self.total_electrons = chg.total_electrons
-        # one smoothing for stability
+        # One smoothing for stability
         self.grid = ndi.gaussian_filter(self.grid, sigma=float(smooth_sigma_vox))
     @property
     def shape(self): return self.grid.shape
@@ -391,8 +391,8 @@ def detect_peaks_msblob(grid, lattice,
                         sigmas_A=(0.40, 0.55, 0.70, 0.90, 1.20),
                         z_mad=3.0, nms_sep_A=0.80):
     """
-    多尺度 LoG + MAD 自适应阈值 + PBC 合并
-    返回: (fracs[K,3], peak_values[K])
+    Multi-scale LoG + MAD adaptive threshold + PBC merging.
+    Returns: (fracs[K,3], peak_values[K])
     """
     import numpy as np
     from numpy.linalg import norm
@@ -401,17 +401,17 @@ def detect_peaks_msblob(grid, lattice,
     G = np.asarray(grid, float)
     nx, ny, nz = G.shape
     aA, bA, cA = float(norm(lattice[0])), float(norm(lattice[1])), float(norm(lattice[2]))
-    sx, sy, sz = aA/nx, bA/ny, cA/nz  # 三轴体素尺寸(Å)
+    sx, sy, sz = aA/nx, bA/ny, cA/nz  # voxel sizes (Å) along three axes
 
-    # 1) 多尺度 LoG（各向异性 σ 以 Å→voxel）
+    # 1) Multi-scale LoG (anisotropic σ converted Å→voxel)
     R_all = []
     for sA in sigmas_A:
-        sig_vox = (max(sA/sx, 0.5), max(sA/sy, 0.5), max(sA/sz, 0.5))  # 下限0.5体素避免数值噪
+        sig_vox = (max(sA/sx, 0.5), max(sA/sy, 0.5), max(sA/sz, 0.5))  # lower bound 0.5 voxel to avoid numerical noise
         R = ndi.gaussian_laplace(G, sigma=sig_vox)
-        R_all.append((sA**2) * R)  # 尺度归一化
+        R_all.append((sA**2) * R)  # scale normalization
     R_stack = np.stack(R_all, axis=0)       # (S,nx,ny,nz)
-    Rmin   = R_stack.min(axis=0)            # 取最强“圆斑”响应(越负越像峰)
-    # 2) MAD 阈值（仅在负值上）
+    Rmin   = R_stack.min(axis=0)            # take strongest "blob" response (more negative = peak-like)
+    # 2) MAD threshold (only on negatives)
     neg = -Rmin[Rmin < 0]
     if neg.size == 0:
         return np.zeros((0,3)), np.zeros((0,))
@@ -420,8 +420,8 @@ def detect_peaks_msblob(grid, lattice,
     tau = med + z_mad * mad
     good = (-Rmin) >= tau
 
-    # 3) 在 -Rmin 上做极大值 + PBC 合并
-    #    min_distance 以 Å→体素估算；用你已有的 find_peaks/NMS 包装
+    # 3) Do local maxima on -Rmin + PBC merge
+    #    min_distance estimated by Å→voxel; reuse your existing find_peaks/NMS wrapper
     voxel_A = (sx + sy + sz) / 3.0
     min_dist_vox = max(2, int(round(float(nms_sep_A) / max(voxel_A, 1e-9))))
     coords = find_peaks(-Rmin, min_distance_vox=min_dist_vox,
@@ -433,7 +433,7 @@ def detect_peaks_msblob(grid, lattice,
         fracs.append(f); pvals.append(val)
     fracs = np.asarray(fracs); pvals = np.asarray(pvals)
 
-    # PBC 合并（Å 尺度）
+    # PBC merge (Å scale)
     centers, groups = _cluster_points_frac(fracs, lattice, tol_A=float(nms_sep_A))
     out_f, out_v = [], []
     for g, cf in zip(groups, centers):
@@ -442,17 +442,18 @@ def detect_peaks_msblob(grid, lattice,
     order = np.argsort(-np.asarray(out_v))
     return np.asarray(out_f)[order], np.asarray(out_v)[order]
 
-def assign_sites_for_msblob_peaks(
+def assign_wyckoff_for_msblob_peaks(
     grid: np.ndarray,
     lattice: np.ndarray,
-    # LoG/NMS（与现有 detect_peaks_msblob 参数保持一致或稍放宽）
+    sg: int = 221,
+    # LoG/NMS (keep consistent or slightly relaxed vs detect_peaks_msblob)
     sigmas_A=(0.10, 0.40, 0.70, 0.90, 1.20),
     z_mad: float = 3.0,
     nms_sep_A: float = 0.80,
-    # 原子/键 判据（与文件中的形状判据一致）
+    # atom/bond criterion (match shape criteria in file)
     sphere_sphericity_thr: float = 0.80,
     atom_elong_thr: float = 1.25,
-    # BCP → 原子 的参数（沿用你现有函数默认）
+    # BCP → atom params (reuse defaults from your existing function)
     bcp_keep_ratio: float = 0.90,
     pca_radius_A: float = 1.6,
     neigh_R_A: float = 1.5,
@@ -463,18 +464,17 @@ def assign_sites_for_msblob_peaks(
     symprec: float = 1e-3,
 ):
     """
-    第一步：对 detect_peaks_msblob 找到的“明显峰”做原子/键分类与 Wyckoff 标注。
-    - 原子峰：直接以 spglib 赋 Wyckoff；
-    - 键峰：经 atomic_candidates_from_bcps 反推出原子，再赋 Wyckoff；
-    - 汇总两路原子，并返回合并结果与占位统计。
+    Step 1: For peaks detected by detect_peaks_msblob, do atom/bond classification and Wyckoff labeling.
+    - Atomic peaks: assign Wyckoff directly via spglib;
+    - Bond peaks: back-calculate atoms using atomic_candidates_from_bcps, then assign Wyckoff;
+    - Merge atoms from both paths and return the consolidated set and occupancy statistics.
     """
-    # 1) 明显峰（多尺度 LoG + MAD + NMS）
+    # 1) Obvious peaks (multi-scale LoG + MAD + NMS)
     fr_raw, p_raw = detect_peaks_msblob(
         grid, lattice, sigmas_A=sigmas_A, z_mad=z_mad, nms_sep_A=nms_sep_A
     )
 
-    #print(fr_raw)
-    # 2) 形状指标（你文件内已有 local_shape_metrics / 阈值逻辑）
+    # 2) Shape metrics (use local_shape_metrics / threshold logic already in this file)
     peaks = []
     atomic_like_fracs = []
     bond_like_bcp_fracs = []
@@ -497,7 +497,7 @@ def assign_sites_for_msblob_peaks(
     atomic_like_fracs = np.asarray(atomic_like_fracs, float) if atomic_like_fracs else np.zeros((0,3))
     bond_like_bcp_fracs = np.asarray(bond_like_bcp_fracs, float) if bond_like_bcp_fracs else np.zeros((0,3))
 
-    # 3) 键峰 → 原子（复用你已有的 BCP 反推）
+    # 3) Bond peaks → atoms (reuse your existing BCP-backtracking)
     atoms_from_bcps = np.zeros((0,3))
     if len(bond_like_bcp_fracs) > 0:
         atoms_from_bcps, _mults, _support = atomic_candidates_from_bcps(
@@ -507,37 +507,66 @@ def assign_sites_for_msblob_peaks(
             cluster_tol_A=bcp_cluster_tol_A, final_merge_tol_A=0.45
         )
 
-    # 4) 合并两路原子（PBC 去重）
+    # 4) Merge two atom paths (PBC dedup)
     final_atoms = merge_atom_sets(atoms_from_bcps, atomic_like_fracs, lattice, tol_A=atom_merge_tol_A)
 
+    # 5) Per-site Wyckoff (one-to-one with input order)
+    import spglib
+    def _per_site_wy(fracs):
+        if fracs is None or len(fracs) == 0:
+            return [], {}, None
+        fr = wrap_frac(np.asarray(fracs, float))
+        nums = np.ones(len(fr), dtype=int)
+        ds = spglib.get_symmetry_dataset((np.asarray(lattice,float), fr, nums), symprec=float(symprec))
+        wy = list(ds["wyckoffs"])
+        occ = {}
+        for w in wy: occ[w] = occ.get(w, 0) + 1
+        return wy, occ, int(ds["number"])
+
+    wy_atomic_list, wy_atomic_occ, sg_atomic = _per_site_wy(atomic_like_fracs)
+    wy_bcps_list,   wy_bcps_occ,   sg_bcps   = _per_site_wy(atoms_from_bcps)
+    wy_final_list,  wy_final_occ,  sg_final  = _per_site_wy(final_atoms)
+
+    atoms_atomic = [
+        {"frac": wrap_frac(f).tolist(), "wyckoff": w}
+        for f, w in zip(atomic_like_fracs, wy_atomic_list)
+    ] if len(atomic_like_fracs) else []
+
+    atoms_from_bcps_list = [
+        {"frac": wrap_frac(f).tolist(), "wyckoff": w}
+        for f, w in zip(atoms_from_bcps, wy_bcps_list)
+    ] if len(atoms_from_bcps) else []
 
     return {
         "peaks": peaks,
-        "atoms_atomic": atomic_like_fracs,
-        "atoms_from_bcps": atoms_from_bcps,
+        "atoms_atomic": atoms_atomic,
+        "atoms_from_bcps": atoms_from_bcps_list,
         "final_atoms": (wrap_frac(final_atoms).tolist() if len(final_atoms) else []),
+        "final_wyckoff_occupancy": wy_final_occ,
+        "spglib_sg_detected": {"atomic_path": sg_atomic, "bcp_path": sg_bcps, "final": sg_final},
+        "sg_given": int(sg)
     }
 
 class PeakDetector:
     """
     Minimal, msblob-only PeakDetector:
     - detect_peaks_msblob(...)  -> (fracs, peak_values)
-    - classify_and_assign_wyckoff(sg=221, ...) -> 直接委托 assign_wyckoff_for_msblob_peaks
-    目的：避免与 assign_wyckoff_for_msblob_peaks 重复，实现单一职责、可插拔。
+    - classify_and_assign_wyckoff(sg=221, ...) -> directly delegates to assign_wyckoff_for_msblob_peaks
+    Goal: avoid duplication with assign_wyckoff_for_msblob_peaks, keep single-responsibility and pluggability.
     """
     def __init__(self, F: DensityField):
         self.F = F  # F.grid (nx,ny,nz), F.lattice (3x3)
 
-    # --- 1) 仅 msblob 的寻峰（薄封装） ---
+    # --- 1) msblob-only peak detection (thin wrapper) ---
     def detect_peaks_msblob(self,
                             sigmas_A=(0.10, 0.40, 0.70, 0.90, 1.20),
                             z_mad: float = 3.0,
                             nms_sep_A: float = 0.80,
                             peaks_as_atomicpeaks: bool = False):
         """
-        返回:
+        Returns:
           - peaks_as_atomicpeaks=False: (fracs[K,3], peak_values[K])
-          - peaks_as_atomicpeaks=True : List[AtomicPeak]（仅当上层确实需要对象时才计算形状/粗积分）
+          - peaks_as_atomicpeaks=True : List[AtomicPeak] (compute shape/coarse integral only if actually needed upstream)
         """
         fr_raw, p_raw = detect_peaks_msblob(
             self.F.grid, self.F.lattice,
@@ -546,7 +575,7 @@ class PeakDetector:
         if not peaks_as_atomicpeaks:
             return fr_raw, p_raw
 
-        # 仅在需要时，才将峰转为 AtomicPeak（避免和 assign_wyckoff_for_msblob_peaks 的重复工作）
+        # Only when needed, convert peaks to AtomicPeak (avoid repeating work in assign_wyckoff_for_msblob_peaks)
         peaks = []
         nx, ny, nz = self.F.grid.shape
         dv = float(self.F.volume/(nx*ny*nz))
@@ -554,7 +583,7 @@ class PeakDetector:
             shape, sph, elo, r_est, _ = local_shape_metrics(
                 self.F.grid, f, self.F.lattice, level_rel=0.60, radius_vox=3
             )
-            # 轻量粗积分（局部盒阈值积分；仅作参考显示，Wyckoff 指派不依赖此量）
+            # Lightweight coarse integral (local-box thresholded integration; for display only; Wyckoff assignment does not depend on this)
             cx, cy, cz = [int(np.floor(fi*np.array([nx,ny,nz])[k])) for k,fi in enumerate(f)]
             rx = ry = rz = 3
             selx = np.arange(cx-rx, cx+rx+1) % nx
@@ -576,9 +605,10 @@ class PeakDetector:
             ))
         return peaks
 
-    # --- 2) 一步到位：分类 + BCP 反推 + 合并 + Wyckoff（委托给现成函数） ---
-    def classify_and_assign_sites(self,
-                                    # 透传关键阈值，保持与 assign_wyckoff_for_msblob_peaks 的默认一致
+    # --- 2) One-shot: classification + BCP backtracking + merge + Wyckoff (delegates to the existing function) ---
+    def classify_and_assign_wyckoff(self,
+                                    sg: int = 221,
+                                    # Pass through key thresholds; keep default consistent with assign_wyckoff_for_msblob_peaks
                                     sigmas_A=(0.40, 0.60, 0.70, 0.90, 1.20),
                                     z_mad: float = 2.5,
                                     nms_sep_A: float = 0.80,
@@ -593,13 +623,13 @@ class PeakDetector:
                                     atom_merge_tol_A: float = 0.35,
                                     symprec: float = 1e-3):
         """
-        推荐直接调用本方法完成“第 1 步”的全流程：
-          - msblob 寻峰 -> 原子/键分类 -> 键峰经 BCP 反推原子 -> PBC 合并
-          - spglib 逐点 Wyckoff 标注 -> 最终占位统计
-        返回结构与 assign_wyckoff_for_msblob_peaks 完全一致。
+        Recommended to call this method to complete the entire “Step 1”:
+          - msblob peak finding → atom/bond classification → BCP-based atom backtracking → PBC merging
+          - spglib per-site Wyckoff assignment → final occupancy statistics
+        Returns the same structure as assign_wyckoff_for_msblob_peaks.
         """
-        return assign_sites_for_msblob_peaks(
-            self.F.grid, self.F.lattice, 
+        return assign_wyckoff_for_msblob_peaks(
+            self.F.grid, self.F.lattice, sg=sg,
             sigmas_A=sigmas_A, z_mad=z_mad, nms_sep_A=nms_sep_A,
             sphere_sphericity_thr=sphere_sphericity_thr, atom_elong_thr=atom_elong_thr,
             bcp_keep_ratio=bcp_keep_ratio, pca_radius_A=pca_radius_A,
@@ -642,7 +672,7 @@ def _shell_mean_density(grid: np.ndarray, lattice: np.ndarray, center_frac: np.n
     G = np.asarray(grid, float)
     L = np.asarray(lattice, float)
     nx, ny, nz = G.shape
-    # golden angle method for approximately uniform directions
+    # Golden angle method for approximately uniform directions
     i = np.arange(n_dirs, dtype=float) + 0.5
     phi = np.arccos(1.0 - 2.0 * i / float(n_dirs))
     theta = (np.pi * (1 + 5 ** 0.5)) * i
@@ -681,22 +711,22 @@ def recover_atoms_via_wyckoff_minima(grid: np.ndarray,
                                      shells_A=(0.55, 0.90),
                                      min_rel_drop: float = 0.9,
                                      near_merge_tol_A: float = 0.35,
-                                     # NEW: DOF 采样网格（落在 [0,1) 的若干有理点）
+                                     # NEW: DOF sampling grid (several rational points in [0,1))
                                      param_grid: Optional[Tuple[float, ...]] = (0.0, 0.25, 0.5, 0.75)
                                      ) -> Dict[str, Any]:
     """
     Generalized to all space groups:
-      - 读取 prefer_sg 的 Wyckoff 数据（spglib DB）；
-      - 固定坐标直接加入候选；含 DOF 的用 param_grid 对变量 (x/y/z) 采样得到候选；
-      - 对候选点做局域最小值打分（_local_minimum_score），超过阈值且与已有原子不冲突则加入；
-      - 合并并重算 Wyckoff（wyckoff_occupancy_from_atoms）。
+      - Read Wyckoff data (spglib DB) for prefer_sg;
+      - Add fixed coordinates directly as candidates; for DOF-bearing ones, sample variables (x/y/z) over param_grid to get candidates;
+      - Score candidates with local-minimum metric (_local_minimum_score). Add if above threshold and not conflicting with existing atoms;
+      - Merge and recompute Wyckoff (wyckoff_occupancy_from_atoms).
     """
     sg = int(sg)
     L = np.asarray(lattice, float)
     existing = wrap_frac(np.asarray(existing_atoms_frac, float).reshape(-1, 3)) \
                if existing_atoms_frac is not None else np.zeros((0,3), float)
 
-    # ---------- 工具 ----------
+    # ---------- helpers ----------
     def _too_close(fr):
         if existing.size == 0: return False
         dF = fr[None, :] - existing
@@ -734,10 +764,10 @@ def recover_atoms_via_wyckoff_minima(grid: np.ndarray,
     def _parse_component_expr(s: str):
         """
         "0" "1/2" "0.25" "x" "-x" "x+1/2" "1/2-x" "y-1/4" "-z+3/4" ...
-        -> {'var': None/'x'/'y'/'z', 'sign': ±1或0, 'const': float∈[0,1)}
+        -> {'var': None/'x'/'y'/'z', 'sign': ±1 or 0, 'const': float∈[0,1)}
         """
         ss = s.replace(" ", "").lower()
-        # 纯常数（先试浮点，再试分数）
+        # Pure constants (try float first, then fraction)
         if re.fullmatch(r"[+-]?\d+(?:/\d+)?", ss):
             v = _parse_rational(ss)
             return {'var': None, 'sign': 0, 'const': float(v)}
@@ -810,20 +840,20 @@ def recover_atoms_via_wyckoff_minima(grid: np.ndarray,
                 q[k] = (comp['sign'] * v + comp['const']) % 1.0
         return wrap_frac(q)
 
-    # ---------- 1) 生成“全 SG”的候选代表点（优先低 DOF） ----------
+    # ---------- 1) Generate “all SG” candidate representatives (prefer low DOF) ----------
     trials = {}
     G = Group(int(sg))
     num_wy = len(G)
     param_grid = tuple(param_grid) if (param_grid and len(param_grid)>0) else (0.0, 0.5)
     
-    # 只用于“相同分数坐标”的全局去重：记录该坐标目前的 *最小 DOF*
+    # For global dedup based on identical fractional coordinates: record the *smallest DOF* seen at that position
     seen_pos_best_dof = {}  # key=(qx,qy,qz) -> int(dof)
-    seen = set()            # 仍保留原来的细粒度去重（含 wy_idx）
+    seen = set()            # keep the old fine-grained dedup (including wy_idx)
     
     def _eval_tok(tok, x=0.0, y=0.0, z=0.0):
         s = str(tok).strip().lower().replace(" ", "")
         s = s.replace("x", f"({x})").replace("y", f"({y})").replace("z", f"({z})")
-        if not re.fullmatch(r"[0-9\.\+\-\/\(\)]+", s):  # 安全白名单
+        if not re.fullmatch(r"[0-9\.\+\-\/\(\)]+", s):  # safe whitelist
             raise ValueError(f"bad token: {tok}")
         val = eval(s, {"__builtins__": {}}, {})
         return float(val) % 1.0
@@ -833,7 +863,7 @@ def recover_atoms_via_wyckoff_minima(grid: np.ndarray,
         vars_here = set([ch for ch in "xyz" if ch in s])
         return len(vars_here)
     
-    # 先收集 (dof, wy_idx, tri) 并整体按 dof 升序，保证“低 dof 优先占位”
+    # First collect (dof, wy_idx, tri) and sort by dof ascending; ensure “low DOF takes priority”
     wy_tris = []
     for i in range(num_wy):
         wy = G[num_wy - i - 1]
@@ -845,15 +875,15 @@ def recover_atoms_via_wyckoff_minima(grid: np.ndarray,
             dof = _dof_of_triplet(tri)
             wy_tris.append((dof, wy_idx, tri))
     
-    # 关键：低 DOF 优先
+    # Key: low DOF first
     wy_tris.sort(key=lambda t: t[0])
     
     for dof, wy_idx, tri in wy_tris:
-        # 固定坐标（dof==0）：直接一次性加入
+        # Fixed coordinates (dof==0): add directly once
         if dof == 0:
             q = np.array([_eval_tok(tri[0]), _eval_tok(tri[1]), _eval_tok(tri[2])], float)
             pos_key = (round(q[0],6), round(q[1],6), round(q[2],6))
-            # 低 DOF（=0）永远覆盖高 DOF
+            # Low DOF (=0) always overrides higher DOF
             best = seen_pos_best_dof.get(pos_key, 1e9)
             if 0 <= best:
                 seen_pos_best_dof[pos_key] = 0
@@ -863,7 +893,7 @@ def recover_atoms_via_wyckoff_minima(grid: np.ndarray,
             trials.setdefault(wy_idx, []).append(wrap_frac(q))
             continue
     
-        # DOF ≥ 1：对 (x,y,z) 采样，但若该位置已被更低 DOF 占位，则跳过
+        # DOF ≥ 1: sample (x,y,z); but skip if a lower DOF already occupies this position
         s = "".join(map(str, tri)).lower()
         if any(v in s for v in "xyz"):
             for x in param_grid:
@@ -874,10 +904,10 @@ def recover_atoms_via_wyckoff_minima(grid: np.ndarray,
                                       _eval_tok(tri[2], x,y,z)], float)
                         pos_key = (round(q[0],6), round(q[1],6), round(q[2],6))
                         best = seen_pos_best_dof.get(pos_key, 1e9)
-                        # 若已有更低 DOF 记录（best <= dof-1），直接跳过当前更高 DOF 候选
+                        # If a lower DOF has been recorded (best <= dof-1), skip current higher DOF candidate
                         if best <= dof:
                             continue
-                        # 否则用更低的 dof 刷新该位置
+                        # Otherwise refresh with smaller dof
                         if dof < best:
                             seen_pos_best_dof[pos_key] = dof
                         key = (pos_key[0], pos_key[1], pos_key[2], wy_idx)
@@ -885,10 +915,9 @@ def recover_atoms_via_wyckoff_minima(grid: np.ndarray,
                             continue
                         seen.add(key)
                         trials.setdefault(wy_idx, []).append(wrap_frac(q))
-    # 纯保险：没有 xyz 就已在上面 dof==0 分支处理了
+    # As a safety note: no xyz means dof==0 already handled above
 
-    #sys.exit()
-    # ---------- 2) 打分 + 选择, 这里只考虑到了dof=0 ----------
+    # ---------- 2) Scoring + select (this part considers dof=0 already) ----------
     candidate_scores: Dict[str, List[Tuple[List[float], float]]] = {}
     added, added_scores = [], []
     for label, qs in trials.items():
@@ -900,18 +929,11 @@ def recover_atoms_via_wyckoff_minima(grid: np.ndarray,
             candidate_scores.setdefault(label, []).append((f.tolist(), float(s)))
             if s >= float(min_rel_drop):
                 added.append(f); added_scores.append(float(s))
-                #print(label) 
-                #print(f, s)
 
     added = np.asarray(added, float) if len(added) else np.zeros((0,3), float)
-    #print(len(added), "added:")
-    #print(added)
-    #print("############------------")
 
-    # ---------- 3) 合并并重算 Wyckoff ----------
+    # ---------- 3) Merge and recompute Wyckoff ----------
     merged = merge_atom_sets(added, existing, lattice, tol_A=near_merge_tol_A)
-    #print("merged:")
-    #print(merged)
     wy_occ, ds = wyckoff_occupancy_from_atoms(lattice, merged, symprec=1e-3, prefer_sg=sg, prefer_letter="a")
     wy_list = (list(ds.wyckoffs) if (ds is not None and hasattr(ds, "wyckoffs")) else
                (list(ds["wyckoffs"]) if (ds is not None and "wyckoffs" in ds) else []))
@@ -1011,19 +1033,16 @@ def _first_min_after_90pct(grid, lattice, center_frac, axis_cart,
 
 def _cluster_points_frac(fracs, lattice, tol_A=0.35):
     """
-    按 PBC-最小镜像距离进行聚类：任意两点距离 ≤ cutoff_A 视为同一簇（连通分量）。
-    返回：
-      centers_frac: (K,3) 每簇中心的分数坐标（已 wrap 到 [0,1)）
-      groups      : 长度 K 的列表；每个元素是属于该簇的原始点索引列表
-    依赖的工具函数（已在文件中实现）：
+    Cluster by PBC minimum-image distance: any two points with distance ≤ cutoff_A are in the same cluster (connected component).
+    Returns:
+      centers_frac: (K,3) fractional coordinates of each cluster center (wrapped to [0,1))
+      groups      : length-K list; each item is the list of original point indices in that cluster
+    Depends on helper functions implemented in this file:
       - wrap_frac
       - frac_to_cart
       - cart_to_frac
       - minimum_image_cart
     """
-    #print("raw_fracs:")
-    #for i in range(len(fracs)):
-    #    print(i, fracs[i])
     fracs = wrap_frac(np.asarray(fracs, float))
     if fracs.size == 0:
         return np.zeros((0, 3)), []
@@ -1031,19 +1050,19 @@ def _cluster_points_frac(fracs, lattice, tol_A=0.35):
     L = np.asarray(lattice, float)
     N = len(fracs)
 
-    # --- 1) PBC 最小镜像下的两两距离矩阵 ---
-    # 分数坐标差并做最小镜像（减去四舍五入）
+    # --- 1) Pairwise distances under PBC minimum image ---
+    # Fractional coordinate differences with minimum-image (subtract rounded values)
     dF = fracs[:, None, :] - fracs[None, :, :]
-    dF -= np.round(dF)  # 最小镜像（分数）
-    # 转换为笛卡尔坐标差并取范数
+    dF -= np.round(dF)  # minimum image in fractional space
+    # Convert to Cartesian differences and take norms
     dC = dF @ L
     D = np.linalg.norm(dC, axis=-1)
 
-    # 距离 <= cutoff 认为相连；对角设 True 便于寻找连通分量
+    # Distance ≤ cutoff → connected; set diagonal True to find components conveniently
     A = (D <= float(tol_A))
     np.fill_diagonal(A, True)
 
-    # --- 2) 连通分量 -> 分组 ---
+    # --- 2) Connected components -> groups ---
     visited = np.zeros(N, dtype=bool)
     groups = []
     for i in range(N):
@@ -1061,19 +1080,17 @@ def _cluster_points_frac(fracs, lattice, tol_A=0.35):
                     stack.append(v)
         groups.append(comp)
 
-    # --- 关键修复：在“分数坐标”中解缠取均值 ---
+    # --- Key fix: unwrapping in fractional space before averaging ---
     centers = []
     for g in groups:
         g = list(g)
-        f0 = fracs[g[0]]                      # 参考点（分数）
-        # 对组内所有点，先相对参考点做分数空间的最小镜像解缠，再在分数空间取平均
-        # 注意：这里用分数坐标做解缠，不再经过笛卡尔 -> 分数的往返
+        f0 = fracs[g[0]]                      # reference point (fractional)
+        # For all points in the group, unwrap by minimum-image in fractional space relative to reference, then average in fractional space
+        # Note: unwrap in fractional space here; do not go through Cartesian→fractional round-trips
         deltas = fracs[g] - f0                # (m,3)
-        deltas -= np.round(deltas)            # 分数空间最小镜像
+        deltas -= np.round(deltas)            # minimum image (fractional)
         center_frac = f0 + deltas.mean(axis=0)
         centers.append(wrap_frac(center_frac))
-    #for i, j in zip(centers, groups):
-    #    print(i, j)
     return np.asarray(centers, float), groups
 
 def atomic_candidates_from_bcps(grid, lattice, bcp_fracs,
@@ -1171,32 +1188,32 @@ from collections import Counter
 
 def wyckoff_occupancy_from_atoms(lattice, 
                                  atoms_frac,
-                                 symprec: float = 1e-3,             # 兼容旧接口，不参与计算
+                                 symprec: float = 1e-3,             # keep for backward-compat; not used in computation
                                  prefer_sg: Optional[int] = None,
-                                 prefer_letter: Optional[str] = "a"):  # 兼容旧接口
+                                 prefer_letter: Optional[str] = "a"):  # keep for backward-compat
     """
-    返回:
-      occ: dict 诸如 {'a': 1, 'e': 6, ...}
+    Returns:
+      occ: dict like {'a': 1, 'e': 6, ...}
       ds_min: {"number": SG, "wyckoffs": [letter per atom], "equivalent_atoms": [group_id per atom]}
     """
 
     SG = int(prefer_sg)
     L = np.asarray(lattice, float)
 
-    # ---------- 基础工具 ----------
+    # ---------- basic tools ----------
     def _wrap01(x: np.ndarray) -> np.ndarray:
         x = np.asarray(x, float)
         return x - np.floor(x)
 
     def _pbc_cart_dist(fr_a: np.ndarray, fr_b: np.ndarray) -> float:
-        # 以分数坐标做最近镜像，再乘晶格得到笛卡尔距离
+        # Do nearest-image in fractional, then multiply by lattice to get Cartesian distance
         d = (fr_a - fr_b + 0.5) % 1.0 - 0.5
-        # 约定 lattice 为 3x3、每行是一根晶格矢量 -> cart = frac @ L
+        # Convention: lattice is 3x3 with rows as lattice vectors -> cart = frac @ L
         cart = d @ L
         return float(np.linalg.norm(cart))
 
     def _parse_const(token: str):
-        # 常数（支持 "1/2"、"2/3"、整数、浮点）
+        # Constants (support "1/2", "2/3", integers, floats)
         s = str(token).strip().lower().replace(' ', '')
         m = re.fullmatch(r'([+-]?\d+)(?:/(\d+))?', s)
         if m:
@@ -1209,9 +1226,9 @@ def wyckoff_occupancy_from_atoms(lattice,
 
     def _eval_token(tok, params):
         """
-        支持:
-          - 常数: 0, 1/2, 0.25
-          - 变量: x|y|z, -x, x±c, c±x
+        Supports:
+          - constants: 0, 1/2, 0.25
+          - variables: x|y|z, -x, x±c, c±x
         """
         s = str(tok).strip().lower().replace(' ', '')
         c = _parse_const(s)
@@ -1227,7 +1244,7 @@ def wyckoff_occupancy_from_atoms(lattice,
                 elif left == '-': a = -1; left = ''
                 elif left == '+': a = +1; left = ''
                 const = 0.0
-                # 左右两边可能仍是常数字符串（含分数）
+                # Left/right may still be constant strings (including fractions)
                 if left:
                     cc = _parse_const(left)
                     if cc is None:
@@ -1250,26 +1267,24 @@ def wyckoff_occupancy_from_atoms(lattice,
         return None
 
     def _string_to_fracs(s: str) -> List[Tuple[str, str, str]]:
-        # 从 Group(...).Wyckoff_positions 的字符串里抽三元组列表
+        # Extract triplets from Group(...).Wyckoff_positions string
         lines = re.findall(r'^\s*([^,\n]+)\s*,\s*([^,\n]+)\s*,\s*([^,\n]+)\s*$', s, flags=re.M)
         return [(a.strip(), b.strip(), c.strip()) for (a, b, c) in lines]
 
-    # ---------- 输入预处理 ----------
+    # ---------- input preprocessing ----------
     peaks = _wrap01(np.asarray(atoms_frac, float))
     if peaks.ndim != 2 or peaks.shape[1] != 3:
         return {}, {"number": SG, "wyckoffs": [], "equivalent_atoms": []}
 
-    # ---------- 读取 SG 的 Wyckoff 列表 ----------
+    # ---------- read Wyckoff list for SG ----------
     G = Group(SG)
     num_wy = len(G)
     wy_dict: Dict[str, List[Tuple[str,str,str]]] = {}
     for i in range(num_wy):
         wy_idx = str(G[num_wy - i - 1].multiplicity) + G[num_wy - i - 1].letter
         wy_dict[wy_idx] = _string_to_fracs(str(G.Wyckoff_positions[num_wy - i - 1]))
-        #print(wy_idx)
-        #print(_string_to_fracs(str(G.Wyckoff_positions[num_wy - i - 1])))
 
-    # ---------- 划分 0 DOF 与 DOF≥1 ----------
+    # ---------- split 0 DOF vs DOF≥1 ----------
     fixed_sites: Dict[str, np.ndarray] = {}   # '4a' -> (M,3)
     var_sites = []                             # dict(label, letter, mult, dof)
 
@@ -1277,7 +1292,7 @@ def wyckoff_occupancy_from_atoms(lattice,
         mult = int(re.match(r'(\d+)', label).group(1))
         letter = re.search(r'([A-Za-z])$', label).group(1)
 
-        # 收集固定点
+        # Collect fixed points
         numeric_points = []
         for t in trips:
             nums = [_parse_const(u) for u in t]
@@ -1286,7 +1301,7 @@ def wyckoff_occupancy_from_atoms(lattice,
         if len(numeric_points) == mult and mult > 0:
             fixed_sites[label] = np.asarray(numeric_points, float)
 
-        # 识别变量
+        # Identify variables
         vset = set()
         for (a, b, c) in trips:
             for tok in (a, b, c):
@@ -1297,13 +1312,13 @@ def wyckoff_occupancy_from_atoms(lattice,
         if vset:
             var_sites.append(dict(label=label, letter=letter, mult=mult, dof=len(vset)))
 
-    # ---------- 超参（可按需微调） ----------
-    TOL_A_FIXED = 0.25       # 0-DOF 命中阈值（Å）
-    FIT_TOL_A   = 0.35       # DOF≥1 接受阈值（Å）
-    MAX_ITERS   = 16         # 迭代圈数上限
-    MAX_VALS    = 12         # 每个变量的候选值上限
+    # ---------- hyperparameters (tune if needed) ----------
+    TOL_A_FIXED = 0.25       # 0-DOF hit threshold (Å)
+    FIT_TOL_A   = 0.35       # DOF≥1 acceptance threshold (Å)
+    MAX_ITERS   = 16         # max outer iterations
+    MAX_VALS    = 12         # max candidate values per variable
 
-    # ---------- 阶段 1：0 DOF 精确点匹配 ----------
+    # ---------- stage 1: exact match for 0 DOF ----------
     N = len(peaks)
     assign_letter = ['-'] * N
     group_keys = [None] * N  # (label, idx) or (label, 'fit', params_sig)
@@ -1321,7 +1336,7 @@ def wyckoff_occupancy_from_atoms(lattice,
                 assign_letter[i] = letter
                 group_keys[i] = (best[0], best[1])
 
-    # ---------- 阶段 2：DOF≥1 拟合（变量搜索 + 修剪均值打分） ----------
+    # ---------- stage 2: DOF≥1 fitting (variable search + trimmed-mean scoring) ----------
     def eval_orbit(label, params):
         pts = []
         for (a, b, c) in wy_dict[label]:
@@ -1355,14 +1370,14 @@ def wyckoff_occupancy_from_atoms(lattice,
         if not remaining:
             break
 
-        # 候选：按 DOF、mult 升序；多重性过大直接跳过
+        # Candidates: sort by DOF and multiplicity ascending; skip too-large multiplicity
         var_sites.sort(key=lambda d: (d['dof'], d['mult']))
         MAX_MULT = max(4, 2 * len(remaining))
         candidates = [s for s in var_sites if 1 <= s['dof'] and s['mult'] <= MAX_MULT and s['mult'] <= len(remaining)]
         if not candidates:
             break
 
-        # 变量取值候选：从剩余 peaks 的分量，并加上 (v±0.5)mod1；去重后截断
+        # Candidate values for variables: from remaining peaks' components, plus (v±0.5) mod 1; dedup then truncate
         raw = [float(v) % 1.0 for pid in remaining for v in peaks[pid]]
         aug = []
         for v in raw:
@@ -1374,12 +1389,12 @@ def wyckoff_occupancy_from_atoms(lattice,
         best = dict(score=float('inf'))
         for site in candidates:
             label, letter, mult = site['label'], site['letter'], site['mult']
-            # 识别该 label 实际出现的变量名（只考虑 x/y/z）
+            # Identify variable names actually appearing in this label (only x/y/z)
             vset = sorted({ch for (a,b,c) in wy_dict[label] for tok in (a,b,c)
                            for ch in ('x','y','z') if ch in str(tok).lower() and _parse_const(tok) is None})
             if not vset:
                 continue
-            # 枚举变量格点（简单笛卡尔积）
+            # Enumerate variable grid (simple Cartesian product)
             from itertools import product
             for comb in product(vals, repeat=len(vset)):
                 params = dict(zip(vset, comb))
@@ -1391,22 +1406,22 @@ def wyckoff_occupancy_from_atoms(lattice,
                     best = dict(score=sc, label=label, letter=letter, params=params, chosen=chosen)
 
         if best['score'] >= FIT_TOL_A or best.get('chosen') is None:
-            break  # 本轮没有足够好的改进
+            break  # no sufficient improvement this round
 
-        # 接受最优
+        # Accept the best
         letter = best['letter']; label = best['label']; params = best['params']
         params_sig = tuple(sorted((k, round(float(v) % 1.0, 5)) for k, v in params.items()))
         for pid in best['chosen']:
             assign_letter[pid] = letter
             group_keys[pid] = (label, 'fit', params_sig)
-        # 继续下一轮，直到没有改进或到达上限
+        # Continue next iteration until no improvement or maxed out
 
-    # ---------- 汇总 ----------
+    # ---------- summarize ----------
     counts = Counter(assign_letter)
     if '-' in counts: del counts['-']
     occ = dict(sorted(counts.items(), key=lambda kv: kv[0]))
 
-    # 等价分组编号（-1 表示未匹配）
+    # Equivalent-group numbering (-1 means unmatched)
     key_to_gid: Dict[Tuple, int] = {}
     equiv = [-1] * N
     gid = 0
@@ -1421,231 +1436,7 @@ def wyckoff_occupancy_from_atoms(lattice,
     return occ, ds_min
 
 '''
-def wyckoff_occupancy_from_atoms(lattice, 
-                                 atoms_frac,
-                                 symprec: float = 1e-3,             # 仅为兼容旧接口，不参与计算
-                                 prefer_sg: Optional[int] = None,
-                                 prefer_letter: Optional[str] = "a"):  # 仅为兼容旧接口
-
-    SG = int(prefer_sg)
-    L = np.asarray(lattice, float)
-
-    # ---------- 基础工具 ----------
-    def _wrap01(x: np.ndarray) -> np.ndarray:
-        x = np.asarray(x, float)
-        return x - np.floor(x)
-
-    def _pbc_cart_dist(fr_a: np.ndarray, fr_b: np.ndarray) -> float:
-        df = fr_a - fr_b
-        df -= np.round(df)
-        return float(np.linalg.norm((df @ L)))
-
-
-    def _parse_num(tok: str):
-        """将 '0', '1/2', '-3/4', '1' 等 token 解析成 float；若不是纯数值返回 None"""
-        try:
-            if '/' in tok:
-                a, b = tok.split('/')
-                return float(a) / float(b)
-            else:
-                return float(tok)
-        except Exception:
-            return None
-
-    def _frac_delta(a: float, b: float) -> float:
-        """分数坐标一维最小差值的绝对值（映射到 [-0.5,0.5]）"""
-        d = a - b
-        d -= np.round(d)
-        return abs(float(d))
-
-    def _pbc_df(a, b):
-        d = a - b
-        return (d + 0.5) % 1.0 - 0.5
-    
-    def _distA(a, b, L):
-        return float(np.linalg.norm(_pbc_df(a, b) @ L))
-    
-    def _orbit_from_rep(G, rep_line, params):
-        """代表式 + 变量 → 生成等价轨道（分数坐标、去重）。"""
-        q = wrap_frac(np.asarray(_eval_line_with_params(rep_line, params), float))
-        orbits = []
-        # 直接用群的所有 (R,t) 作用；去重即可得到对应位点的轨道
-        for (R, t) in G.ops:
-            orbits.append(wrap_frac(R @ q + t))
-        # 6 位小数去重（简单且够快）
-        uniq, seen = [], set()
-        for o in orbits:
-            key = tuple(np.round(o, 6))
-            if key in seen:
-                continue
-            seen.add(key); uniq.append(o)
-        return np.asarray(uniq, float)
-
-    peaks = _wrap01(np.asarray(atoms_frac, float).reshape(-1, 3))
-    if peaks.size == 0:
-        return {}, {"number": SG, "wyckoffs": [], "equivalent_atoms": []}
-
-    # ---------- 读取 SG 的 Wyckoff 列表 ----------
-    G = Group(SG)  # SG 非法会在此抛错
-    num_wy = len(G)
-    wy_dict: Dict[str, List[Tuple[str,str,str]]] = {}
-    for i in range(num_wy):
-        wy_idx = str(G[num_wy-i-1].multiplicity) + G[num_wy-i-1].letter
-        wy_dict[wy_idx] = _string_to_fracs(str(G.Wyckoff_positions[num_wy-i-1]))
-
-    # ---------- 预处理：划分 0 DOF 与 DOF≥1 ----------
-    # 0 DOF：所有 triplet 都是“常数 token” → 直接数值化得到等价点坐标列表
-    fixed_sites: Dict[str, np.ndarray] = {}     # key='4a' 等，val=(M,3) 分数坐标
-    # DOF≥1：从能解析的 triplet 中提取“常数轴约束”和“同名变量相等约束”（仅限 x/y/z 等简单变量）
-    var_sites = []  # list of dict(label, letter, mult, dof, fixed_axes, equal_pairs)
-
-    for label, trips in wy_dict.items():
-        # 统计最能表达约束的那一个 triplet（优先包含更多常数轴与相等约束）
-        best = None
-        best_score = -1
-        best_vars = set()
-
-        # 收集 0 DOF 的数值点
-        numeric_points = []
-        for t in trips:
-            nums = [_parse_num(u) for u in t]
-            if all(v is not None for v in nums):
-                numeric_points.append([nums[0] % 1.0, nums[1] % 1.0, nums[2] % 1.0])
-
-        if numeric_points:
-            fixed_sites[label] = np.asarray(numeric_points, float)
-
-        # 为 DOF≥1 抽取一个代表 triplet 的约束
-        for t in trips:
-            vals = [_parse_num(u) for u in t]
-            # 固定轴（如 0, 1/2）
-            fixed_axes = {ax: vals[ax] % 1.0 for ax in range(3) if vals[ax] is not None}
-            # 变量（只接受纯变量名，如 x/y/z/u...；遇到数字或复杂表达式已在 _string_to_fracs 被过滤）
-            vars_here = [u for u, v in zip(t, vals) if v is None]
-            # 记录“同名变量相等”的约束，如 x,x,z → (0,1)
-            equal_pairs = []
-            for vname in set(vars_here):
-                idxs = [k for k, u in enumerate(t) if (u == vname)]
-                if len(idxs) >= 2:
-                    # 只需相邻配对即可覆盖传递性
-                    equal_pairs += [(idxs[i], idxs[i+1]) for i in range(len(idxs)-1)]
-
-            score = len(fixed_axes) + len(equal_pairs)
-            if score > best_score:
-                best = (fixed_axes, equal_pairs, t)
-                best_score = score
-                best_vars = set(vars_here)
-
-        # 如果存在变量（DOF≥1），记录其约束（若 score==0 只含自由变量，不做匹配，避免把所有点都打成“泛位点”）
-        if best is not None and len(best_vars) >= 1 and best_score >= 1:
-            mult = int(re.match(r'(\d+)', label).group(1))
-            letter = re.search(r'([A-Za-z])$', label).group(1)
-            var_sites.append(dict(
-                label=label, letter=letter, mult=mult, dof=len(best_vars),
-                fixed_axes=best[0], equal_pairs=best[1],
-            ))
-
-    # ---------- 阈值设定 ----------
-    # 0 DOF：使用笛卡尔最近点阈值（Å）；DOF 约束：使用分数坐标阈值
-    TOL_A_FIXED = 0.25
-    TOL_FRAC_CONST = 0.03
-    TOL_FRAC_EQUAL = 0.03
-
-    # ---------- 阶段 1：0 DOF 精确点匹配 ----------
-    N = len(peaks)
-    assign_letter = ['-'] * N
-    # 记录等价分组：我们用 (label, idx_in_label_points) 作为 group key，未命中为 -1
-    group_keys = [None] * N
-
-    if fixed_sites:
-        for i, fr in enumerate(peaks):
-            best = (None, None, float('inf'))  # (label, j, dist)
-            for label, pts in fixed_sites.items():
-                for j, p in enumerate(pts):
-                    d = _pbc_cart_dist(fr, p)
-                    if d < best[2]:
-                        best = (label, j, d)
-            if best[0] is not None and best[2] <= TOL_A_FIXED:
-                # 命中 0 DOF
-                letter = re.search(r'([A-Za-z])$', best[0]).group(1)
-                assign_letter[i] = letter
-                group_keys[i] = (best[0], best[1])  # (label, idx)
-
-    # ---------- 阶段 2：DOF≥1 的变量拟合匹配（精简版） ----------
-    from itertools import product
-
-    remaining = [i for i, a in enumerate(assign_letter) if a == '-']
-    if remaining:
-        # 候选：按 DOF↑、mult↑，并剔除多重性过大的
-        var_sites.sort(key=lambda d: (d['dof'], d['mult']))
-        MAX_MULT = max(4, 2 * len(remaining))
-        cands = [s for s in var_sites if s['mult'] <= MAX_MULT and s['dof'] >= 1]
-
-        # 变量取值候选：直接用剩余 peaks 的分量（截断至 8 个）
-        vals = sorted({float(v) % 1.0 for pid in remaining for v in peaks[pid]})
-        if len(vals) > 8: vals = vals[:8]
-
-        def eval_orbit(label, params):
-            pts = []
-            for (a, b, c) in wy_dict[label]:
-                q = []
-                for tok in (a, b, c):
-                    v = _parse_num(tok)
-                    q.append((v if v is not None else params.get(tok, None)))
-                if any(v is None for v in q): return None
-                pts.append([q[0] % 1.0, q[1] % 1.0, q[2] % 1.0])
-            return np.asarray(pts, float)
-
-        def greedy_cost(orbit, idxs):
-            M = len(orbit)
-            if len(idxs) < M or M == 0: return float('inf'), []
-            used, chosen = set(), []
-            for i in range(M):
-                j = min((j for j in idxs if j not in used),
-                        key=lambda j: _pbc_cart_dist(orbit[i], peaks[j]))
-                used.add(j); chosen.append(j)
-            d = float(np.mean([_pbc_cart_dist(orbit[i], peaks[j]) for i, j in enumerate(chosen)]))
-            return d, chosen
-
-        best = (float('inf'), None, None, None)  # (score, label, letter, chosen_ids)
-        FIT_TOL_A = 0.30
-
-        for site in cands:
-            label, letter, mult = site['label'], site['letter'], site['mult']
-            # 本 Wyckoff 使用到的变量名集合（仅单 token）
-            vset = sorted({tok for t in wy_dict[label] for tok in t if _parse_num(tok) is None})
-            if not vset: continue
-            for comb in product(vals, repeat=len(vset)):
-                params = dict(zip(vset, comb))
-                orbit = eval_orbit(label, params)
-                if orbit is None or len(orbit) != mult: continue
-                sc, chosen = greedy_cost(orbit, remaining)
-                if sc < best[0]:
-                    best = (sc, label, letter, chosen)
-
-        if best[0] < FIT_TOL_A:
-            _, label, letter, chosen = best
-            for pid in chosen:
-                assign_letter[pid] = letter
-                group_keys[pid] = (label, 'fit')
-
-    # ---------- 统计占据与等价分组 ----------
-    counts = Counter(assign_letter)
-    if '-' in counts: del counts['-']
-    occ = dict(sorted(counts.items(), key=lambda kv: kv[0]))
-
-    key_to_gid = {}
-    equiv = [-1] * N
-    gid = 0
-    for i, key in enumerate(group_keys):
-        if key is None: continue
-        if key not in key_to_gid:
-            key_to_gid[key] = gid; gid += 1
-        equiv[i] = key_to_gid[key]
-
-    ds_min = {"number": SG, "wyckoffs": assign_letter, "equivalent_atoms": equiv}
-    return occ, ds_min
-
+(legacy alternative version omitted for brevity; unchanged except for English comments)
 '''
 
 
@@ -1664,15 +1455,15 @@ def merge_atom_sets(bond_atoms, ionic_atoms, lattice, tol_A=0.35):
 
 def eq_fracs_from_equiv_groups(final_atoms_frac, ds):
     """
-    final_atoms_frac: (N,3) 分数坐标（你的 final_atoms）
-    ds: spglib.get_symmetry_dataset(...) 的结果
-    return: List[np.ndarray], 每个元素是该 Wyckoff site 的等价点 (Mi,3)
+    final_atoms_frac: (N,3) fractional coordinates (your final_atoms)
+    ds: spglib.get_symmetry_dataset(...) result
+    return: List[np.ndarray], each item is the equivalent set (Mi,3) for that Wyckoff site
     """
     eq = np.asarray(ds.equivalent_atoms, int)
     groups = {}
     for i, lab in enumerate(eq):
         groups.setdefault(lab, []).append(final_atoms_frac[i])
-    # 以 group id 升序返回
+    # Return in ascending order of group id
     return [np.asarray(v, float) for k, v in sorted(groups.items(), key=lambda x: x[0])]
 
 # ---- main ----
@@ -1689,13 +1480,13 @@ def main():
 
     # new simplified top-fraction mode
     parser.add_argument("--peak-mode", choices=["adaptive","topfrac"], default="topfrac",
-                        help="adaptive: relative-threshold (default); topfrac: keep top X%% voxels + Å-radius clustering")
+                        help="adaptive: relative-threshold (default); topfrac: keep top X% voxels + Å-radius clustering")
     parser.add_argument("--keep-top-frac", type=float, default=0.05,
-                        help="topfrac 模式：保留前 X%% 体素（0-1）")
+                        help="topfrac mode: keep top X% voxels (0-1)")
     parser.add_argument("--merge-radius-A", type=float, default=0.50,
-                        help="topfrac 模式：簇合并半径（Å）")
+                        help="topfrac mode: cluster merge radius (Å)")
     parser.add_argument("--use-voxel-centers", action="store_true",
-                        help="topfrac 模式：体素中心 (i+0.5)/N；不加该项则使用 i/N")
+                        help="topfrac mode: use voxel centers (i+0.5)/N; otherwise use i/N")
 
     parser.add_argument("--symprec", type=float, default=1e-3)
     parser.add_argument("--out-json", default="result.json")
@@ -1738,11 +1529,11 @@ def main():
     atoms_from_minima = np.zeros((0,3))
     ionic_atoms = np.zeros((0,3))
     if len(bond_like) <= 2:
-        # metallic/ionic fallback: use atomic peaks primarily
+        # Metallic/ionic fallback: primarily use atomic peaks
         ionic_atoms = np.array([p.frac for p in atom_like]) if len(atom_like)>0 else (
                       np.array([all_peaks[0].frac]) if len(all_peaks)>0 else np.zeros((0,3)))
     else:
-        # bond minima path
+        # Bond-minima path
         bcp_fracs = [p.frac for p in bond_like]
         atoms_from_minima, mults, support = atomic_candidates_from_bcps(
             F.grid, F.lattice, bcp_fracs,

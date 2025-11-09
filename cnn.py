@@ -183,7 +183,7 @@ def site_patch_mean_over_equivalents(
 # ----------------------------- Site embedding CNN ----------------------------- #
 
 def _gn(c: int) -> nn.GroupNorm:
-    # 选择能被通道数整除的最大 group，保证稳定
+    # Choose the largest group number that divides the channel count evenly to ensure stability
     for g in (8, 4, 2, 1):
         if c % g == 0:
             return nn.GroupNorm(g, c)
@@ -198,7 +198,7 @@ class SE3D(nn.Module):
         self.fc2 = nn.Conv3d(hidden, c, kernel_size=1)
 
     def forward(self, x):
-        # 全局平均池化到 1x1x1
+        # Global average pooling to 1x1x1
         w = x.mean(dim=[2, 3, 4], keepdim=True)
         w = F.silu(self.fc1(w))
         w = torch.sigmoid(self.fc2(w))
@@ -206,8 +206,9 @@ class SE3D(nn.Module):
 
 class ResBlock3D(nn.Module):
     """
-    残差块：Conv3d -> GN -> SiLU -> Conv3d -> GN -> (SE) -> 残差
-    支持通过 stride 在第一层下采样；输入输出通道不同时使用 1x1x1 shortcut。
+    Residual block: Conv3d -> GN -> SiLU -> Conv3d -> GN -> (SE) -> residual
+    Supports downsampling by stride in the first conv layer;
+    uses a 1x1x1 shortcut when input and output channels differ.
     """
     def __init__(self, in_c: int, out_c: int, stride: int = 1, use_se: bool = True, drop: float = 0.0):
         super().__init__()
@@ -225,7 +226,7 @@ class ResBlock3D(nn.Module):
             ) if (stride != 1 or in_c != out_c) else nn.Identity()
         )
 
-        # Kaiming 初始化
+        # Kaiming initialization
         for m in self.modules():
             if isinstance(m, nn.Conv3d):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
@@ -243,31 +244,31 @@ class ResBlock3D(nn.Module):
 
 class SitePatchCNN(nn.Module):
     """
-    更强版 3D CNN：
-      - stem + 3 个 stage（每个 stage 含 2 个残差块，第一块 stride=2 做下采样）
-      - 通道配置：32 -> 64 -> 128 -> 256
-      - GroupNorm + SiLU，SE 注意力，投影到 embed_dim，并做 L2 归一化
-    输入:  (N, in_channels, 32, 32, 32)
-    输出:  (N, embed_dim)
+    Enhanced 3D CNN:
+      - stem + 3 stages (each stage has 2 residual blocks; the first block uses stride=2 for downsampling)
+      - Channel configuration: 32 -> 64 -> 128 -> 256
+      - GroupNorm + SiLU, SE attention, projection to embed_dim, and L2 normalization
+    Input:  (N, in_channels, 32, 32, 32)
+    Output: (N, embed_dim)
     """
     def __init__(
         self,
         embed_dim: int = 128,
         in_channels: int = 1,
-        width: int = 32,          # stem 宽度；整体容量旋钮
+        width: int = 32,          # Stem width; global capacity knob
         se_reduction: int = 8,
-        drop: float = 0.0         # 残差块内的 Dropout3d，可设 0.1 试试
+        drop: float = 0.0         # Dropout3d in residual blocks; try 0.1
     ):
         super().__init__()
-        # stem：轻量起步
+        # stem: lightweight entry
         self.stem = nn.Sequential(
             nn.Conv3d(in_channels, width, kernel_size=3, stride=1, padding=1, bias=False),
             _gn(width),
             nn.SiLU(inplace=True),
         )
 
-        # stages：每级通道×2，并在第一块做 stride=2 下采样
-        c1, c2, c3 = width, width * 2, width * 4  # 32, 64, 128 (若 width=32)
+        # stages: double the channels at each level, downsample at the first block
+        c1, c2, c3 = width, width * 2, width * 4  # 32, 64, 128 (if width=32)
         c4 = width * 8                             # 256
 
         self.stage1 = nn.Sequential(
@@ -289,11 +290,11 @@ class SitePatchCNN(nn.Module):
             nn.Linear(c4, embed_dim),
         )
 
-        # 线性层初始化
+        # Linear layer initialization
         nn.init.trunc_normal_(self.head[-1].weight, std=0.02)
         nn.init.zeros_(self.head[-1].bias)
 
-        self.se_reduction = se_reduction  # 保留参数以便外部查看配置
+        self.se_reduction = se_reduction  # keep parameter for external inspection
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # x: (N, C, 32, 32, 32)
